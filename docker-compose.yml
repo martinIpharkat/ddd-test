@@ -1,4 +1,4 @@
-version: "3.3"
+version: "2.2"
 
 services:
   otc-web:
@@ -8,16 +8,15 @@ services:
     command: >
        sh -c "python manage.py runserver 0.0.0.0:8000"
     volumes:
-      - .:.
+      - ./otcexchange:/app/otcexchange
     ports:
       - "8000:8000"  
     env_file:
-      - ./otcexchange/.env
-    networks:
-      - kawdoon
+      - ./.env
 
-  crypto-db:
+  otc-db:
     image: postgres:14-alpine
+    container_name: otc-db
     user: postgres
     environment:
       - POSTGRES_DB=otcexchange
@@ -27,5 +26,45 @@ services:
       - database:/var/lib/postgresql/data
     ports:
       - "5434:5432"
+
+  otc-redis:
+    container_name: otc-redis
+    image: redis:alpine
     networks:
-      - kawdoon    
+      - kawdoon
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 100
+  otc-celery:
+    container_name: otc-celery
+    build:
+      context: .
+    command: celery -A infrastructure.otc worker -l INFO --autoscale=20,4
+    working_dir: /app/otcexchange
+    volumes:
+      - ./otcexchange:/app/otcexchange
+      - static:/app/static
+      - media:/app/media
+    env_file:
+      - ./otcexchange/.env
+    networks:
+      - kawdoon
+    depends_on:
+      crypto-redis:
+        condition: service_healthy
+
+  otc-beat:
+    container_name: otc-celery-beat
+    build:
+      context: .
+    command: celery -A infrastructure.otc beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    working_dir: /app/otcexchange
+    volumes:
+      - ./otcexchange:/app/otcexchange
+    env_file:
+      - ./.env
+    depends_on:
+      otc-redis:
+        condition: service_healthy    
